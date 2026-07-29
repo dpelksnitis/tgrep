@@ -25,6 +25,8 @@ use tgrep_core::hybrid::HybridIndex;
 use tgrep_core::query;
 
 const CACHE_CAPACITY: usize = 50_000;
+/// Default mutation count that triggers a background save (override with
+/// `--auto-save-mutations`).
 const AUTO_SAVE_MUTATIONS: u32 = 5000;
 const AUTO_SAVE_INTERVAL: Duration = Duration::from_secs(600); // 10 minutes
 /// Default bound on the watcher's pending-event queue (override with
@@ -169,6 +171,10 @@ struct ServerState {
     /// Number of worker threads used for the parallel file-reading/trigram
     /// extraction during the initial build. Caps indexing CPU usage.
     index_threads: usize,
+    /// Number of accumulated in-memory mutations that triggers a background
+    /// save. Higher values reduce save frequency (and the pauses they cause)
+    /// at the cost of more unsaved work if the process is killed.
+    auto_save_mutations: u32,
 }
 
 struct SearchOpts {
@@ -188,9 +194,11 @@ pub fn run(
     memory_cap_bytes: u64,
     index_threads: usize,
     watcher_queue_cap: Option<usize>,
+    auto_save_mutations: Option<u32>,
 ) -> Result<()> {
     let serve_start = Instant::now();
     let watcher_queue_cap = watcher_queue_cap.unwrap_or(WATCHER_QUEUE_CAP);
+    let auto_save_mutations = auto_save_mutations.unwrap_or(AUTO_SAVE_MUTATIONS);
     let root = std::fs::canonicalize(root)?;
     let index_dir = index_path
         .map(|p| p.to_path_buf())
@@ -261,6 +269,7 @@ pub fn run(
         gitignore: RwLock::new(None),
         memory_cap_bytes,
         index_threads,
+        auto_save_mutations,
     });
 
     // Bind TCP listener on a random port
@@ -1132,7 +1141,7 @@ fn auto_save_loop(state: Arc<ServerState>, index_dir: &Path) {
         };
 
         let elapsed = last_save.elapsed();
-        if dirty >= AUTO_SAVE_MUTATIONS || (dirty > 0 && elapsed >= AUTO_SAVE_INTERVAL) {
+        if dirty >= state.auto_save_mutations || (dirty > 0 && elapsed >= AUTO_SAVE_INTERVAL) {
             let save_start = Instant::now();
             eprintln!("[trace] auto-save: {dirty} mutations, saving...");
 

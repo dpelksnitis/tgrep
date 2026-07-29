@@ -253,6 +253,13 @@ enum Command {
         /// cost of more memory. Defaults to 16384.
         #[arg(long = "watcher-queue-cap", value_name = "N", value_parser = parse_positive_usize)]
         watcher_queue_cap: Option<usize>,
+
+        /// Number of accumulated index mutations that triggers a background
+        /// save. Higher values reduce save frequency (and the pauses they
+        /// cause during heavy churn) at the cost of more unsaved work if the
+        /// process is killed. Defaults to 5000.
+        #[arg(long = "auto-save-mutations", value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+        auto_save_mutations: Option<u32>,
     },
 
     /// Search for a pattern.
@@ -360,6 +367,7 @@ fn main() {
             max_cpu_percent,
             exclude,
             watcher_queue_cap,
+            auto_save_mutations,
         }) => {
             let memory_cap = max_memory_mb
                 .map(|mb| mb.saturating_mul(1024 * 1024))
@@ -373,6 +381,7 @@ fn main() {
                 memory_cap,
                 index_threads,
                 watcher_queue_cap,
+                auto_save_mutations,
             )
         }
         Some(Command::Search {
